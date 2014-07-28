@@ -25,7 +25,7 @@ import static reactor.event.selector.Selectors.object
  * Typically a Ratpack application will bind this component within a Module.
  *
  * @author Stephane Maldini
- * @since 1.0
+ * @since 1.1
  */
 @Slf4j
 @CompileStatic
