@@ -2,7 +2,6 @@ import io.smaldini.github.GithubModule
 import io.smaldini.github.GithubService
 import ratpack.groovy.templating.TemplatingModule
 import ratpack.jackson.JacksonModule
-import reactor.core.composable.Stream
 import reactor.tuple.Tuple2
 
 import static ratpack.groovy.Groovy.groovyTemplate
@@ -33,10 +32,10 @@ ratpack {
 		get("orgs/:org/rank") { GithubService githubService ->
 
 			//fetch github Repos asynchronously
-			githubService.findRepositoriesByOrganizationId(allPathTokens.org).
+			githubService.findRepositoriesByOrganizationId((String)allPathTokens.org).
 
-					//bind a promise for pull requests size per repo
-							mapMany { String repo ->
+					//bind a sub stream for pull requests size per repo
+							flatMap { String repo ->
 								githubService.countPullRequestsByRepository(repo).map { Integer pr ->
 
 									//just a bit of noise to be sure of what's happening for the cautious reader :)
@@ -47,10 +46,10 @@ ratpack {
 								}
 							}.
 
-							collect().
+							buffer().
 
 					// sort the previously collected repo/pr pair list per PR (t2) and Repo name (t1)
-							consume { List<Tuple2<String, Integer>> tupleList ->
+							map { List<Tuple2<String, Integer>> tupleList ->
 								tupleList.sort { Tuple2<String, Integer> e1, Tuple2<String, Integer> e2 ->
 									e2.t2 == e1.t2 ? e1.t1 <=> e2.t1 : e2.t2 <=> e1.t2
 								}
@@ -71,9 +70,7 @@ ratpack {
 								ex.printStackTrace()
 								response.status(503)
 								render json(ex.message)
-							}.
-					flush()
-
+							}
 		}
 
 	}

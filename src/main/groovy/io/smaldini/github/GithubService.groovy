@@ -7,17 +7,15 @@ import com.ning.http.client.AsyncHttpClient
 import com.ning.http.client.Response
 import groovy.transform.CompileStatic
 import groovy.util.logging.Slf4j
-
 import reactor.core.Environment
-import reactor.core.composable.Deferred
-import reactor.core.composable.Promise
-import reactor.core.composable.Stream
-import reactor.core.composable.spec.Promises
-import reactor.core.composable.spec.Streams
-import java.util.concurrent.TimeUnit
 import reactor.event.registry.CachingRegistry
 import reactor.event.registry.Registry
 import reactor.function.Consumer
+import reactor.rx.Promise
+import reactor.rx.Stream
+import reactor.rx.spec.Streams
+
+import java.util.concurrent.TimeUnit
 
 import static reactor.event.selector.Selectors.object
 
@@ -77,15 +75,14 @@ class GithubService {
 		final matchingCaches = repoCache.select(orgId)
 		if(matchingCaches){
 			//return a pre-populated Stream
-			return Streams.defer(matchingCaches[0].object).env(environment).get()
+			return Streams.defer(matchingCaches.get(0).object, environment)
 		}
 
 		//prepare a deferred stream
-		final deferredResult = Streams.<String> defer().get()
-		def stream = deferredResult.compose().bufferWithErrors()
+		final stream = Streams.<String> defer()
 
 		//call yo github asynchronously
-		get(githubApiUrl + orgsApiSuffix.replace(URI_PARAM_ORG, orgId), deferredResult){ Response response ->
+		get(githubApiUrl + orgsApiSuffix.replace(URI_PARAM_ORG, orgId), stream){ Response response ->
 			//jackson stuff for reading a JSON list from root ( [ {...}, {...} ]
 			JsonNode json = reader.readTree(response.responseBodyAsStream)
 			Iterator<JsonNode> iterator = json.elements()
@@ -101,10 +98,9 @@ class GithubService {
 
 			//notify the deferred Stream
 			for(repo in result){
-				deferredResult << repo
+				stream << repo
 			}
-
-			deferredResult.flush()
+			stream.broadcastComplete()
 
 		}
 
@@ -120,21 +116,21 @@ class GithubService {
 	 * @param unescapedRepogId
 	 * @return
 	 */
-	Promise<Integer> countPullRequestsByRepository(final String unescapedRepoId) {
+	Stream<Integer> countPullRequestsByRepository(final String unescapedRepoId) {
 		final String repoId = unescapedRepoId?.trim()
 
 		//try cache first
 		def matchingCaches = numberPullRequestCache.select(repoId)
 		if(matchingCaches){
 			//return a pre-populated success promise
-			return Promises.success(matchingCaches[0].object).env(environment).get()
+			return Streams.defer(matchingCaches.get(0).object, environment)
 		}
 
 		//prepare deferred promise
-		final deferredResult = Promises.<Integer> defer(environment)
+		final stream = Streams.<Integer> defer(environment)
 
 		//call yo github asynchronously
-		get(githubApiUrl + pullRequestsApiSuffix.replace(URI_PARAM_REPO, repoId), deferredResult){ Response response ->
+		get(githubApiUrl + pullRequestsApiSuffix.replace(URI_PARAM_REPO, repoId), stream){ Response response ->
 			//Jackson stuff for counting the number of elements from a root list ([ {...}, {...}] )
 			JsonNode json = reader.readTree(response.responseBodyAsStream)
 			int result = json.elements().size()
@@ -143,11 +139,12 @@ class GithubService {
 			numberPullRequestCache.register(object(repoId), result)
 
 			//notify Promise
-			deferredResult << result
+			stream << result
+			stream.broadcastComplete()
 		}
 
-		//return the Promise consumer-side only to the caller
-		deferredResult.compose()
+		//return the Stream
+		stream
 	}
 
 	/**
@@ -159,7 +156,7 @@ class GithubService {
 	 * @param action
 	 * @return
 	 */
-	private get(final String url, final Deferred deferredResult, final Closure action){
+	private <E> void get(final String url, final Stream<E> deferredResult, final Closure action){
 		//create http builder
 		final request = asyncHttpClient.prepareGet(url)
 
@@ -175,7 +172,7 @@ class GithubService {
 			Response onCompleted(Response response) throws Exception {
 
 				if (response.statusCode != 200) {
-					deferredResult.accept new GithubException("github service returned: $response.statusCode")
+					deferredResult.broadcastError new GithubException("github service returned: $response.statusCode")
 					return response
 				}
 
@@ -186,8 +183,7 @@ class GithubService {
 			@Override
 			void onThrowable(Throwable t) {
 				//GithubService.log.error url, t
-				deferredResult.accept new GithubException("github service can't be contated: $t.message")
-				deferredResult.flush()
+				deferredResult.broadcastError new GithubException("github service can't be contated: $t.message")
 			}
 		})
 	}
