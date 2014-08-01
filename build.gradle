@@ -4,18 +4,18 @@ buildscript {
 		mavenCentral()
 	}
 	dependencies {
-		classpath 'io.ratpack:ratpack-gradle:0.9.4'
+		classpath 'io.ratpack:ratpack-gradle:0.9.7'
 	}
 }
 
 repositories {
 	maven { url "http://oss.jfrog.org/repo" }
-	mavenCentral()
+    jcenter()
 	mavenLocal()
 	maven { url "http://repo.springsource.org/repo" } // for springloaded
 }
 
-apply plugin: "ratpack-groovy"
+apply plugin: "io.ratpack.ratpack-groovy"
 apply plugin: "idea"
 
 idea {
@@ -28,11 +28,12 @@ idea {
 dependencies {
 	// SpringLoaded enables runtime hot reloading.
 	// It is not part of the app runtime and is not shipped in the distribution.
-	springloaded "org.springsource.springloaded:springloaded-core:1.1.4"
+	springloaded "org.springsource.loaded:springloaded:1.1.5.RELEASE"
 
 	compile "org.projectreactor:reactor-groovy:2.0.0.BUILD-SNAPSHOT"
-	compile "io.ratpack:ratpack-jackson:0.9.4"
-	compile 'com.ning:async-http-client:1.7.1'
+	compile ratpack.dependency("jackson")
+
+    runtime 'org.slf4j:slf4j-simple:1.7.7'
 
 	testCompile "org.slf4j:jcl-over-slf4j:1.7.5"
 	testCompile "org.spockframework:spock-core:0.7-groovy-2.0", {

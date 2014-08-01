@@ -2,11 +2,14 @@ package io.smaldini.github
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectReader
-import com.ning.http.client.AsyncCompletionHandler
-import com.ning.http.client.AsyncHttpClient
-import com.ning.http.client.Response
 import groovy.transform.CompileStatic
 import groovy.util.logging.Slf4j
+import ratpack.func.Action
+import ratpack.http.client.HttpClient
+import ratpack.http.client.HttpClients
+import ratpack.http.client.ReceivedResponse
+import ratpack.http.client.RequestSpec
+import ratpack.launch.LaunchConfig
 import reactor.core.Environment
 import reactor.event.registry.CachingRegistry
 import reactor.event.registry.Registry
@@ -35,7 +38,6 @@ class GithubService {
 	final static private String URI_PARAM_ORG = ":org"
 	final static private String URI_PARAM_REPO = ":repo"
 
-	final private AsyncHttpClient asyncHttpClient = new AsyncHttpClient()
 	final private String githubApiUrl = "https://api.github.com/"
 	final private String orgsApiSuffix = "orgs/$URI_PARAM_ORG/repos"
 	final private String pullRequestsApiSuffix = "repos/$URI_PARAM_REPO/pulls"
@@ -45,10 +47,12 @@ class GithubService {
 	final private int reaperPeriod = 60000
 	final private ObjectReader reader
 	final private String apiToken
+    final private HttpClient httpClient
 
-	GithubService(ObjectReader reader, String apiToken = null) {
+	GithubService(ObjectReader reader, String apiToken = null, LaunchConfig launchConfig) {
 		this.reader = reader
 		this.apiToken = apiToken
+        this.httpClient = HttpClients.httpClient(launchConfig)
 
 		 //clean github http result caches every reaperPeriod
 		environment.rootTimer.schedule(new Consumer<Long>() {
@@ -82,9 +86,9 @@ class GithubService {
 		final stream = Streams.<String> defer()
 
 		//call yo github asynchronously
-		get(githubApiUrl + orgsApiSuffix.replace(URI_PARAM_ORG, orgId), stream){ Response response ->
+		get(githubApiUrl + orgsApiSuffix.replace(URI_PARAM_ORG, orgId), stream){ ReceivedResponse response ->
 			//jackson stuff for reading a JSON list from root ( [ {...}, {...} ]
-			JsonNode json = reader.readTree(response.responseBodyAsStream)
+			JsonNode json = reader.readTree(response.body.inputStream)
 			Iterator<JsonNode> iterator = json.elements()
 
 			//reading full_name and appending to results
@@ -130,9 +134,9 @@ class GithubService {
 		final stream = Streams.<Integer> defer(environment)
 
 		//call yo github asynchronously
-		get(githubApiUrl + pullRequestsApiSuffix.replace(URI_PARAM_REPO, repoId), stream){ Response response ->
+		get(githubApiUrl + pullRequestsApiSuffix.replace(URI_PARAM_REPO, repoId), stream){ ReceivedResponse response ->
 			//Jackson stuff for counting the number of elements from a root list ([ {...}, {...}] )
-			JsonNode json = reader.readTree(response.responseBodyAsStream)
+			JsonNode json = reader.readTree(response.body.inputStream)
 			int result = json.elements().size()
 
 			//hydrate cache
@@ -157,34 +161,23 @@ class GithubService {
 	 * @return
 	 */
 	private <E> void get(final String url, final Stream<E> deferredResult, final Closure action){
-		//create http builder
-		final request = asyncHttpClient.prepareGet(url)
+        String queryString
+        if (apiToken) {
+            queryString = "?" + URI_PARAM_ACCESS_TOKEN + "=" + apiToken
+        }
 
-		//use provided api token if any (bypass rating limit)
-		if (apiToken) {
-			request.addQueryParameter(URI_PARAM_ACCESS_TOKEN, apiToken)
-			//log.trace 'authenticated request'
-		}
-
-		//run http client
-		request.execute(new AsyncCompletionHandler<Response>() {
-			@Override
-			Response onCompleted(Response response) throws Exception {
-
-				if (response.statusCode != 200) {
-					deferredResult.broadcastError new GithubException("github service returned: $response.statusCode")
-					return response
-				}
-
-				action(response)
-				response
-			}
-
-			@Override
-			void onThrowable(Throwable t) {
-				//GithubService.log.error url, t
-				deferredResult.broadcastError new GithubException("github service can't be contated: $t.message")
-			}
-		})
+        httpClient.get({ RequestSpec request ->
+            request.url.set(new URI(url + queryString))
+            request.headers.set("User-Agent", "ratpack-reactor-gh-sample")
+        } as Action<? super RequestSpec>) onError {Throwable t ->
+            deferredResult.broadcastError new GithubException("github service can't be contated: $t.message")
+        } then {ReceivedResponse response ->
+            if (response.statusCode != 200) {
+                deferredResult.broadcastError new GithubException("github service returned: $response.statusCode")
+                return response
+            }
+            action(response)
+            response
+        }
 	}
 }
