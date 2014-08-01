@@ -12,7 +12,7 @@ class GithubModule extends AbstractModule {
 	@Provides
 	@com.google.inject.Singleton
 	GithubService gitHubApi(LaunchConfig launchConfig, ObjectReader reader) {
-		new GithubService(reader, launchConfig.getOther('github.apiToken', null))
+		new GithubService(reader, launchConfig.getOther('github.apiToken', null), launchConfig)
 	}
 
 	@Override
